@@ -20,6 +20,12 @@ else:
         SpatialQueryMixin, HarvestMetadataApiMixin
     )
 
+
+EAST_LONGITUDE_BOUNDARY = 180
+WEST_LONGITUDE_BOUNDARY = -180
+MAX_COVERAGE = 360
+
+
 def check_geoalchemy_requirement():
     '''Checks if a suitable geoalchemy version installed
 
@@ -52,7 +58,7 @@ def package_error_summary(error_dict):
     ''' Do some i18n stuff on the error_dict keys '''
 
     def prettify(field_name):
-        field_name = re.sub('(?<!\w)[Uu]rl(?!\w)', 'URL',
+        field_name = re.sub(r'(?<!\w)[Uu]rl(?!\w)', 'URL',
                             field_name.replace('_', ' ').capitalize())
         return p.toolkit._(field_name.replace('_', ' '))
 
@@ -242,25 +248,38 @@ class SpatialQuery(SpatialQueryMixin, p.SingletonPlugin):
         from ckan.lib.search import SearchError
 
         if search_params.get('extras', None) and search_params['extras'].get('ext_bbox', None):
-
             bbox = validate_bbox(search_params['extras']['ext_bbox'])
+
             if not bbox:
                 raise SearchError('Wrong bounding box provided')
 
-            # Adjust easting values
-            while (bbox['minx'] < -180):
-                bbox['minx'] += 360
-                bbox['maxx'] += 360
-            while (bbox['minx'] > 180):
-                bbox['minx'] -= 360
-                bbox['maxx'] -= 360
+            bbox = self._adjust_longitude_values(bbox)
+            search_params = self._generate_search_params(bbox, search_params)
 
-            if self.search_backend == 'solr':
-                search_params = self._params_for_solr_search(bbox, search_params)
-            elif self.search_backend == 'solr-spatial-field':
-                search_params = self._params_for_solr_spatial_field_search(bbox, search_params)
-            elif self.search_backend == 'postgis':
-                search_params = self._params_for_postgis_search(bbox, search_params)
+        return search_params
+
+    def _adjust_longitude_values(self, bbox):
+        '''
+        The valid numerical ranges for lon. is assumed -180 to 180 degrees
+        '''
+        for point in ('minx', 'maxx'):
+            while bbox[point] < WEST_LONGITUDE_BOUNDARY:
+                bbox[point] += MAX_COVERAGE
+            while bbox[point] > EAST_LONGITUDE_BOUNDARY:
+                bbox[point] -= MAX_COVERAGE
+
+        return bbox
+
+    def _generate_search_params(self, bbox, search_params):
+        '''
+        Generates search params for solr, depending on the search_backend in use
+        '''
+        if self.search_backend == 'solr':
+            search_params = self._params_for_solr_search(bbox, search_params)
+        elif self.search_backend == 'solr-spatial-field':
+            search_params = self._params_for_solr_spatial_field_search(bbox, search_params)
+        elif self.search_backend == 'postgis':
+            search_params = self._params_for_postgis_search(bbox, search_params)
 
         return search_params
 
